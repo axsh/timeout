@@ -833,14 +833,17 @@ flowchart TB
 
 ### 未確定事項（実装開始前または v0.3 開発中に決定）
 
-1. Command Probe の厳密な exit/output protocol
-2. JSON Event の既定出力先と専用 FD の CLI 指定方法
-3. Protocol 一行あたりの最大サイズ
-4. Observer の backpressure / drop policy
-5. Windows における process tree 終了方式
-6. Result JSON Schema の正式公開方法
-7. `Details` の JSON 変換に失敗した場合の扱い
-8. 子 command が 124 を返した場合と timeoutx 自身の 124 を識別する互換オプション
+> **確定済み**: 下記 8 項目は `prompts/phases/000-foundation/branches/main/ideas/001-Timeoutx-Open-Items-Resolution.md` で確定した。
+> 実装・解釈は同仕様を優先する。
+
+1. Command Probe の厳密な exit/output protocol → 001 R1
+2. JSON Event の既定出力先と専用 FD の CLI 指定方法 → 001 R2
+3. Protocol 一行あたりの最大サイズ → 001 R3
+4. Observer の backpressure / drop policy → 001 R4
+5. Windows における process tree 終了方式 → 001 R5
+6. Result JSON Schema の正式公開方法 → 001 R6
+7. `Details` の JSON 変換に失敗した場合の扱い → 001 R7
+8. 子 command が 124 を返した場合と timeoutx 自身の 124 を識別する互換オプション → 001 R8
 
 ---
 
