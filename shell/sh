@@ -1,0 +1,59 @@
+# timeoutx shell helpers for POSIX sh (reference copy).
+# Prefer: eval "$(timeoutx shell-init)"
+
+timeout_control_send() {
+  if [ -n "${TIMEOUTX_FD:-}" ] && [ "${TIMEOUTX_FD}" -ge 0 ] 2>/dev/null; then
+    printf '%s\n' "$1" >&"$TIMEOUTX_FD" 2>/dev/null || true
+    return 0
+  fi
+}
+
+timeout_heartbeat() {
+  timeout_control_send '{"v":1,"type":"heartbeat"}'
+}
+
+timeout_status() {
+  _tx_msg=$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  timeout_control_send "{\"v\":1,\"type\":\"status\",\"message\":\"${_tx_msg}\"}"
+}
+
+timeout_progress() {
+  _tx_current="" _tx_total="" _tx_stage="" _tx_message=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --current) _tx_current="$2"; shift 2 ;;
+      --total) _tx_total="$2"; shift 2 ;;
+      --stage) _tx_stage="$2"; shift 2 ;;
+      *) _tx_message="$1"; shift ;;
+    esac
+  done
+  _tx_msg=$(printf '%s' "$_tx_message" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  _tx_stg=$(printf '%s' "$_tx_stage" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  if [ -n "$_tx_current" ] && [ -n "$_tx_total" ]; then
+    timeout_control_send "{\"v\":1,\"type\":\"progress\",\"stage\":\"${_tx_stg}\",\"current\":${_tx_current},\"total\":${_tx_total},\"message\":\"${_tx_msg}\"}"
+  else
+    timeout_control_send "{\"v\":1,\"type\":\"progress\",\"stage\":\"${_tx_stg}\",\"message\":\"${_tx_msg}\"}"
+  fi
+}
+
+timeout_unit_begin() {
+  _tx_name="$1"
+  _tx_id=$(date +%s 2>/dev/null || echo $$)
+  _tx_nm=$(printf '%s' "$_tx_name" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  timeout_control_send "{\"v\":1,\"type\":\"unit_begin\",\"id\":${_tx_id},\"name\":\"${_tx_nm}\"}"
+  printf '%s\n' "$_tx_id"
+}
+
+timeout_unit_end() {
+  timeout_control_send "{\"v\":1,\"type\":\"unit_end\",\"id\":$1}"
+}
+
+timeout_unit() {
+  _tx_uname="$1"
+  shift
+  _tx_uid=$(timeout_unit_begin "$_tx_uname")
+  "$@"
+  _tx_st=$?
+  timeout_unit_end "$_tx_uid"
+  return $_tx_st
+}
