@@ -25,7 +25,8 @@ Go function / Shell script / CLI / Worker / Coding Agent
 
 | 対象 | 名前 | 理由 |
 |---|---|---|
-| GitHub repository | `timeout` | プロジェクトの中心概念を簡潔に表す |
+| GitHub repository | `https://github.com/axsh/timeout` | 外部リポジトリから import する公開先 |
+| Go module | `github.com/axsh/timeout` | `go.mod` の module path。外部から `import "github.com/axsh/timeout"` できる |
 | Go package | `timeout` | `timeout.Run`、`timeout.Progress` と自然に読める |
 | CLI executable | `timeoutx` | GNU `timeout` との command 名衝突を避ける |
 
@@ -694,6 +695,49 @@ ETA は v0.3 Core の保証対象外。UI が参考値として表示する場�
 
 すべての時間 Policy が無効な場合、CLI は警告を表示してもよいが、command 実行自体は許可する。
 
+#### R19. 公開と配布
+
+##### R19.1 Go module
+
+- `go.mod` の module path は `github.com/axsh/timeout` とする
+- ライブラリの公開 API はモジュールルートの package `timeout` に置く
+- 外部リポジトリは次で利用できる
+
+```go
+import "github.com/axsh/timeout"
+
+// go get github.com/axsh/timeout
+```
+
+- CLI の main package は `github.com/axsh/timeout/cmd/timeoutx` とし、ライブラリ利用者が import する必要はない
+
+##### R19.2 CLI バイナリ配布
+
+`timeoutx` は GitHub Releases から、ソースをビルドせずにダウンロードできること。
+
+対象は少なくとも次とする。
+
+| OS | アーキテクチャ | 成果物名の例 |
+|---|---|---|
+| Linux | amd64, arm64 | `timeoutx_linux_amd64` / `timeoutx_linux_arm64` |
+| macOS | amd64, arm64 | `timeoutx_darwin_amd64` / `timeoutx_darwin_arm64` |
+| Windows | amd64, arm64 | `timeoutx_windows_amd64.exe` / `timeoutx_windows_arm64.exe` |
+
+- 各成果物に対応する checksum（例: `SHA256SUMS`）を同じ Release に含める
+- `go install github.com/axsh/timeout/cmd/timeoutx@latest` でも導入できる
+
+##### R19.3 ドキュメント
+
+| ファイル | 内容 | 読者 |
+|---|---|---|
+| `README.md` | 全体概要、導入方法、ソースからのビルド方法、詳細ドキュメントへのリンク | 初見の利用者 |
+| `docs/library.md` | Go ライブラリとしての使い方（`New` / `Run`、Signal、Unit、Result） | ライブラリ利用者 |
+| `docs/cli.md` | CLI と Shell API をスクリプトから使う方法 | スクリプト利用者 |
+
+- 詳細な API 例やスクリプト例は `README.md` に詰め込まず、`docs/` に書く
+- `README.md` から `docs/library.md` と `docs/cli.md` へ、初心者が辿れるリンクを置く
+- `README.md` と `docs/` は英語で書く（`prompts/` 配下の仕様書は日本語のまま）
+
 ### 任意要件
 
 - YAML 設定ファイルによる Policy / Probe 定義
@@ -746,6 +790,9 @@ Go API、CLI、Shell は別々の Timeout 実装を持たず、同じ Execution 
 - CLI / Shell 連携には stdout/stderr ではなく inherited FD を使用する
 - Shell 実装は Signal Adapter に限定し、監視ロジックは Go 側へ集約する
 - Timeout 種別は exit code ではなく、Result と診断出力で表現する
+- 公開 module path は `github.com/axsh/timeout` とし、外部リポジトリから import できる
+- CLI バイナリは Linux / macOS / Windows 向けに GitHub Releases へ公開する
+- 利用者向け説明は `README.md`（概要・ビルド）と `docs/library.md` / `docs/cli.md`（詳細）に分ける
 
 ### アーキテクチャ概要
 
@@ -907,6 +954,18 @@ done
 3. `--progress-file` で監視対象ファイルの size / mtime 変化が Progress になることを確認する
 4. ファイル未存在時はデフォルトで Progress なしであることを確認する
 
+### VS15. 外部 import とドキュメント
+
+1. 別モジュールから `import "github.com/axsh/timeout"` し、`timeout.New` と `timeout.Run` を呼べることを確認する
+2. `README.md` に概要、導入、ビルド手順、および `docs/library.md` と `docs/cli.md` へのリンクがあることを確認する
+3. `docs/library.md` に Go API の最小例、`docs/cli.md` に CLI と Shell API の最小例があることを確認する
+
+### VS16. マルチプラットフォームの CLI 成果物
+
+1. タグ付き Release（または同等のリリースジョブ）で、Linux / macOS / Windows の amd64 と arm64 向け `timeoutx` が生成されることを確認する
+2. 各バイナリが `--help` 相当で起動できることを、その OS 上またはクロスコンパイル成果物の存在確認で確認する
+3. checksum ファイルが Release に含まれることを確認する
+
 ---
 
 ## テスト項目 (Testing for the Requirements)
@@ -968,6 +1027,7 @@ scripts/process/integration_test.sh --specify "TestProbe|TestHeartbeatOnOutput|T
 | R13/R14 終了・exit code | VS9, VS10 | `--specify "TestTerminate\|TestExitCode"` |
 | R17 並行安全性 | VS11 | `go test -race`（build/unit） |
 | R12 Probe | VS14 | `--specify "TestProbe\|TestHeartbeatOnOutput\|TestProgressFile"` |
+| R19 公開・ドキュメント | VS15, VS16 | module path の import 確認、Release 成果物一覧、`README.md` / `docs/` の存在 |
 
 ---
 
@@ -985,3 +1045,6 @@ scripts/process/integration_test.sh --specify "TestProbe|TestHeartbeatOnOutput|T
 - [ ] GNU `timeout` と親和性のある exit code を返せる
 - [ ] Race detector 下で並行 Signal と Snapshot のテストが成功する
 - [ ] monotonic clock を差し替え、時間を待たずに決定的なテストができる
+- [ ] 外部リポジトリから `github.com/axsh/timeout` を import できる
+- [ ] Linux / macOS / Windows 向け `timeoutx` を GitHub Releases からダウンロードできる
+- [ ] `README.md` が概要とビルドを説明し、`docs/library.md` と `docs/cli.md` を参照している
