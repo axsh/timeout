@@ -119,4 +119,10 @@ timeoutx run --stall 1m --progress-file ./output.tar -- ./backup.sh
 
 A missing file is not progress.
 
+## Examples
+
+- [shell-progress](../examples/bash/shell-progress) — `shell-init` and quantitative progress
+- [heartbeat-on-output](../examples/bash/heartbeat-on-output) — stdout as heartbeat
+- [progress-file](../examples/bash/progress-file) — file size changes as progress
+
 For the Go API, see [Use timeout as a Go library](library.md).

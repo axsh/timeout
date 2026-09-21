@@ -91,4 +91,12 @@ On timeout, `result.Snapshot` keeps the latest status, the latest progress, and 
 
 The library cancels the execution context. It does not kill arbitrary goroutines. Process `SIGTERM` / `SIGKILL` is handled by the CLI, or by the process runner when you use that API.
 
+## Examples
+
+These directories are complete programs you can run:
+
+- [basic-run](../examples/go/basic-run) — configuration before the function, then success
+- [stall-heartbeat](../examples/go/stall-heartbeat) — heartbeats do not clear stall
+- [units](../examples/go/units) — per-step time limit
+
 See also the [CLI and shell guide](cli.md) and the [project overview](../README.md).

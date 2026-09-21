@@ -20,17 +20,19 @@ func (realClock) Now() time.Time           { return time.Now() }
 func (realClock) Watcher() <-chan struct{} { return nil }
 
 // ManualClock is a controllable clock for tests.
+// Advance signals Watcher with a buffered notification so a monitor that has
+// not entered select yet still observes the new time.
 type ManualClock struct {
-	mu      sync.Mutex
-	now     time.Time
-	watcher chan struct{}
+	mu  sync.Mutex
+	now time.Time
+	ch  chan struct{}
 }
 
 // NewManualClock returns a ManualClock starting at start.
 func NewManualClock(start time.Time) *ManualClock {
 	return &ManualClock{
-		now:     start,
-		watcher: make(chan struct{}),
+		now: start,
+		ch:  make(chan struct{}, 1),
 	}
 }
 
@@ -41,19 +43,18 @@ func (c *ManualClock) Now() time.Time {
 	return c.now
 }
 
-// Watcher returns a channel closed when Advance is called.
+// Watcher returns a channel that receives when Advance is called.
 func (c *ManualClock) Watcher() <-chan struct{} {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.watcher
+	return c.ch
 }
 
 // Advance moves the clock forward and notifies watchers.
 func (c *ManualClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
-	old := c.watcher
-	c.watcher = make(chan struct{})
 	c.mu.Unlock()
-	close(old)
+	select {
+	case c.ch <- struct{}{}:
+	default:
+	}
 }
