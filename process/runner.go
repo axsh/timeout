@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/axsh/timeout"
@@ -33,6 +34,12 @@ type RunRequest struct {
 	ShowProgress       bool
 	ProgressFormatJSON bool
 	WarnNoPolicy       bool
+	Probes             []timeout.CommandProbe
+	EventsPath         string
+	EventsFD           int // -1 unset
+	TimeoutExit        int
+	SignalExit         bool
+	KilledBySIGKILL    *bool // optional out
 }
 
 // Runner starts and supervises OS processes with the policy engine.
@@ -46,6 +53,12 @@ func (Runner) Run(req RunRequest) (timeout.Result, int) {
 	if req.KillAfter <= 0 {
 		req.KillAfter = 10 * time.Second
 	}
+	if req.TimeoutExit == 0 {
+		req.TimeoutExit = 124
+	}
+	if req.EventsFD == 0 {
+		req.EventsFD = -1
+	}
 	if req.WarnNoPolicy {
 		p := req.Config.Policy()
 		if p.Hard == 0 && p.Idle == 0 && p.Stall == 0 && p.Unit == 0 {
@@ -53,15 +66,28 @@ func (Runner) Run(req RunRequest) (timeout.Result, int) {
 		}
 	}
 
+	ew, err := OpenEventWriter(req.EventsPath, req.EventsFD)
+	if err != nil {
+		return timeout.Result{Status: timeout.StatusInternalError, Err: err}, 125
+	}
+	cfg := req.Config
+	if ew != nil || req.ProgressFormatJSON {
+		if ew == nil && req.ProgressFormatJSON {
+			ew, _ = OpenEventWriter("-", -1)
+		}
+		cfg = cfg.Apply(timeout.WithObserver(eventObserver{w: ew}))
+	}
+
 	exitCode := 0
 	var cmdErr error
+	var killedBySIGKILL atomic.Bool
+	var probeFatal atomic.Value // error
+	probeDiag := &timeout.ProbeDiagnostic{}
 
-	result := timeout.Run(req.Ctx, req.Config, func(execH timeout.Execution) error {
+	result := timeout.Run(req.Ctx, cfg, func(execH timeout.Execution) error {
 		cmd := exec.CommandContext(context.Background(), req.Command, req.Args...)
 		cmd.Dir = req.Dir
 		cmd.Env = append(os.Environ(), req.Env...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
 
 		controlR, controlW, err := os.Pipe()
 		if err != nil {
@@ -69,12 +95,11 @@ func (Runner) Run(req RunRequest) (timeout.Result, int) {
 		}
 		defer controlR.Close()
 
-		extraFiles, fdNum, err := prepareControlFD(cmd, controlW)
+		_, fdNum, err := prepareControlFD(cmd, controlW)
 		if err != nil {
 			controlW.Close()
 			return err
 		}
-		_ = extraFiles
 		cmd.Env = append(cmd.Env,
 			fmt.Sprintf("TIMEOUTX_FD=%d", fdNum),
 			"TIMEOUTX_PROTOCOL=1",
@@ -113,13 +138,23 @@ func (Runner) Run(req RunRequest) (timeout.Result, int) {
 		stdoutW.Close()
 		stderrW.Close()
 
+		job, jobErr := attachJob(cmd)
+		if jobErr != nil {
+			fmt.Fprintf(os.Stderr, "timeoutx: warning: job object unavailable: %v\n", jobErr)
+		}
+		defer closeJob(job)
+
+		unitHandles := &unitHandleMap{m: make(map[uint64]timeout.Unit)}
+		applyEnv := func(env protocol.Envelope) {
+			applyEnvelope(execH, env, unitHandles)
+		}
+
 		var wg sync.WaitGroup
 		wg.Add(3)
-		unitHandles := &unitHandleMap{m: make(map[uint64]timeout.Unit)}
 		go func() {
 			defer wg.Done()
 			_ = protocol.ReadLoop(controlR, func(env protocol.Envelope) error {
-				applyEnvelope(execH, env, unitHandles)
+				applyEnv(env)
 				return nil
 			}, func(err error) {
 				fmt.Fprintf(os.Stderr, "timeoutx: protocol: %v\n", err)
@@ -134,11 +169,24 @@ func (Runner) Run(req RunRequest) (timeout.Result, int) {
 			pipeOutput(stderrR, os.Stderr, execH, req.HeartbeatOnOutput, req.ProgressOnOutput)
 		}()
 
-		var probeStop context.CancelFunc
+		probeCtx, probeStop := context.WithCancel(context.Background())
+		defer probeStop()
+		for _, p := range req.Probes {
+			p := p
+			go timeout.StartCommandProbe(probeCtx, p, applyEnv, func(err error) {
+				probeFatal.Store(err)
+				probeStop()
+				execH.Context() // touch
+				// Cancel by killing child so Func can return.
+				_ = terminateProcessGroup(cmd.Process, req.KillAfter, job)
+			}, probeDiag)
+		}
+
+		var fileStop context.CancelFunc
 		if req.ProgressFile != "" {
-			var probeCtx context.Context
-			probeCtx, probeStop = context.WithCancel(context.Background())
-			go watchProgressFile(probeCtx, req.ProgressFile, execH)
+			var fileCtx context.Context
+			fileCtx, fileStop = context.WithCancel(context.Background())
+			go watchProgressFile(fileCtx, req.ProgressFile, execH)
 		}
 
 		waitCh := make(chan error, 1)
@@ -146,17 +194,22 @@ func (Runner) Run(req RunRequest) (timeout.Result, int) {
 
 		select {
 		case <-execH.Context().Done():
-			_ = terminateProcessGroup(cmd.Process, req.KillAfter)
+			_ = terminateProcessGroup(cmd.Process, req.KillAfter, job)
+			killedBySIGKILL.Store(true)
 			cmdErr = <-waitCh
 		case cmdErr = <-waitCh:
 		}
 
-		if probeStop != nil {
-			probeStop()
+		if fileStop != nil {
+			fileStop()
 		}
+		probeStop()
 		_ = controlR.Close()
 		wg.Wait()
 
+		if v := probeFatal.Load(); v != nil {
+			return v.(error)
+		}
 		if cmdErr != nil {
 			if ee, ok := cmdErr.(*exec.ExitError); ok {
 				exitCode = ee.ExitCode()
@@ -168,12 +221,16 @@ func (Runner) Run(req RunRequest) (timeout.Result, int) {
 		return nil
 	})
 
-	code := mapExitCode(result, exitCode, cmdErr)
+	sigKill := killedBySIGKILL.Load()
+	if req.KilledBySIGKILL != nil {
+		*req.KilledBySIGKILL = sigKill
+	}
+	code := mapExitCode(result, exitCode, cmdErr, req.TimeoutExit, req.SignalExit, sigKill)
 	if result.Status == timeout.StatusTimeout {
 		printTimeoutDiag(result)
 	}
 	if req.ResultPath != "" {
-		_ = writeResultJSON(req.ResultPath, result)
+		_ = writeResultJSON(req.ResultPath, result, code, probeDiag)
 	}
 	return result, code
 }
@@ -264,12 +321,22 @@ func watchProgressFile(ctx context.Context, path string, execH timeout.Execution
 	}
 }
 
-func mapExitCode(result timeout.Result, childCode int, cmdErr error) int {
+func mapExitCode(result timeout.Result, childCode int, cmdErr error, timeoutExit int, signalExit, killedBySIGKILL bool) int {
 	switch result.Status {
 	case timeout.StatusTimeout:
-		return 124
+		if signalExit && killedBySIGKILL {
+			return 137
+		}
+		if timeoutExit == 0 {
+			return 124
+		}
+		return timeoutExit
 	case timeout.StatusInternalError:
 		return 125
+	case timeout.StatusFailed:
+		if result.Kind == timeout.KindProbe {
+			return 125
+		}
 	case timeout.StatusCanceled:
 		return 130
 	}
@@ -306,23 +373,28 @@ func printTimeoutDiag(result timeout.Result) {
 }
 
 type resultJSON struct {
-	Status        string          `json:"status"`
-	Kind          string          `json:"kind"`
-	Elapsed       string          `json:"elapsed"`
-	Idle          string          `json:"idle"`
-	Stall         string          `json:"stall"`
-	StatusMessage string          `json:"statusMessage,omitempty"`
-	Progress      *progressJSON   `json:"progress,omitempty"`
-	Timeout       *timeoutJSON    `json:"timeout,omitempty"`
+	SchemaVersion int            `json:"schemaVersion"`
+	Status        string         `json:"status"`
+	Kind          string         `json:"kind"`
+	ExitCode      int            `json:"exitCode"`
+	Elapsed       string         `json:"elapsed"`
+	Idle          string         `json:"idle"`
+	Stall         string         `json:"stall"`
+	StatusMessage string         `json:"statusMessage,omitempty"`
+	EventsDropped uint64         `json:"eventsDropped,omitempty"`
+	Progress      *progressJSON  `json:"progress,omitempty"`
+	Timeout       *timeoutJSON   `json:"timeout,omitempty"`
+	Probes        map[string]any `json:"probes,omitempty"`
 }
 
 type progressJSON struct {
-	Stage     string  `json:"stage,omitempty"`
-	Current   int64   `json:"current"`
-	Total     int64   `json:"total"`
-	Percent   float64 `json:"percent"`
-	Message   string  `json:"message,omitempty"`
-	UpdatedAt string  `json:"updatedAt,omitempty"`
+	Stage     string          `json:"stage,omitempty"`
+	Current   int64           `json:"current"`
+	Total     int64           `json:"total"`
+	Percent   float64         `json:"percent"`
+	Message   string          `json:"message,omitempty"`
+	Details   json.RawMessage `json:"details,omitempty"`
+	UpdatedAt string          `json:"updatedAt,omitempty"`
 }
 
 type timeoutJSON struct {
@@ -330,17 +402,20 @@ type timeoutJSON struct {
 	DetectedAt string `json:"detectedAt,omitempty"`
 }
 
-func writeResultJSON(path string, result timeout.Result) error {
+func writeResultJSON(path string, result timeout.Result, exitCode int, diag *timeout.ProbeDiagnostic) error {
 	rj := resultJSON{
+		SchemaVersion: 1,
 		Status:        string(result.Status),
 		Kind:          string(result.Kind),
+		ExitCode:      exitCode,
 		Elapsed:       result.Elapsed.String(),
 		Idle:          result.Snapshot.IdleFor.String(),
 		Stall:         result.Snapshot.StallFor.String(),
 		StatusMessage: result.Snapshot.Status,
+		EventsDropped: result.EventsDropped,
 	}
-	if result.Snapshot.Progress.UpdatedAt.IsZero() == false || result.Snapshot.Progress.Message != "" || result.Snapshot.Progress.Total > 0 {
-		rj.Progress = &progressJSON{
+	if !result.Snapshot.Progress.UpdatedAt.IsZero() || result.Snapshot.Progress.Message != "" || result.Snapshot.Progress.Total > 0 {
+		pj := &progressJSON{
 			Stage:     result.Snapshot.Progress.Stage,
 			Current:   result.Snapshot.Progress.Current,
 			Total:     result.Snapshot.Progress.Total,
@@ -348,11 +423,20 @@ func writeResultJSON(path string, result timeout.Result) error {
 			Message:   result.Snapshot.Progress.Message,
 			UpdatedAt: result.Snapshot.Progress.UpdatedAt.UTC().Format(time.RFC3339),
 		}
+		if raw, ok := timeout.MarshalDetailsJSON(result.Snapshot.Progress.Details); ok && raw != nil {
+			pj.Details = raw
+		} else if !ok {
+			fmt.Fprintln(os.Stderr, "timeoutx: details_marshal_error")
+		}
+		rj.Progress = pj
 	}
 	if result.Status == timeout.StatusTimeout {
 		rj.Timeout = &timeoutJSON{
 			DetectedAt: result.FinishedAt.UTC().Format(time.RFC3339),
 		}
+	}
+	if diag != nil {
+		rj.Probes = diag.Snapshot()
 	}
 	data, err := json.MarshalIndent(rj, "", "  ")
 	if err != nil {

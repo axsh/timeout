@@ -69,6 +69,8 @@ Start here if you are new to the project:
 
 - [Use timeout as a Go library](docs/library.md)
 - [Use timeoutx from shell scripts](docs/cli.md)
+- [Result JSON Schema](docs/schemas/result.schema.json)
+- [Event NDJSON Schema](docs/schemas/event.schema.json)
 
 ## License
 

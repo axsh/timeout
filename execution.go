@@ -54,7 +54,7 @@ func runExecution(parent context.Context, cfg Config, fn Func) Result {
 
 	ctx, cancel := context.WithCancel(parent)
 	start := clock.Now()
-	obs := newAsyncObserver(cfg.observer)
+	obs := newAsyncObserver(cfg.observer, cfg.observerSize, cfg.observerDrop)
 
 	exec := &execution{
 		ctx:            ctx,
@@ -315,11 +315,12 @@ func (e *execution) finish(parent context.Context, fnErr error) Result {
 		e.mu.Unlock()
 
 		result = Result{
-			Snapshot:    snap,
-			StartedAt:   started,
-			FinishedAt:  now,
-			Elapsed:     now.Sub(started),
-			TimeoutUnit: unitSnap,
+			Snapshot:      snap,
+			StartedAt:     started,
+			FinishedAt:    now,
+			Elapsed:       now.Sub(started),
+			TimeoutUnit:   unitSnap,
+			EventsDropped: e.observer.EventsDropped(),
 		}
 
 		switch {
@@ -332,8 +333,12 @@ func (e *execution) finish(parent context.Context, fnErr error) Result {
 			result.Err = parent.Err()
 		case fnErr != nil:
 			result.Status = StatusFailed
-			result.Kind = KindNone
 			result.Err = fnErr
+			if isProbeFailure(fnErr) {
+				result.Kind = KindProbe
+			} else {
+				result.Kind = KindNone
+			}
 		default:
 			result.Status = StatusSucceeded
 			result.Kind = KindNone

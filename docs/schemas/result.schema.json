@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/axsh/timeout/docs/schemas/result.schema.json",
+  "title": "timeoutx Result",
+  "type": "object",
+  "required": ["schemaVersion", "status", "kind"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["succeeded", "failed", "timeout", "canceled", "internal_error"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["none", "hard", "idle", "stall", "unit", "probe"]
+    },
+    "exitCode": { "type": "integer" },
+    "elapsed": { "type": "string" },
+    "idle": { "type": "string" },
+    "stall": { "type": "string" },
+    "statusMessage": { "type": "string" },
+    "eventsDropped": { "type": "integer", "minimum": 0 },
+    "progress": { "type": "object" },
+    "timeout": { "type": "object" },
+    "probes": { "type": "object" }
+  },
+  "additionalProperties": true
+}

@@ -19,7 +19,10 @@ func prepareControlFD(cmd *exec.Cmd, controlW *os.File) (extra []*os.File, fdNum
 	return cmd.ExtraFiles, 3, nil
 }
 
-func terminateProcessGroup(proc *os.Process, killAfter time.Duration) error {
+func attachJob(cmd *exec.Cmd) (any, error) { return nil, nil }
+func closeJob(job any)                      {}
+
+func terminateProcessGroup(proc *os.Process, killAfter time.Duration, _ any) error {
 	if proc == nil {
 		return nil
 	}
@@ -33,7 +36,6 @@ func terminateProcessGroup(proc *os.Process, killAfter time.Duration) error {
 	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	deadline := time.Now().Add(killAfter)
 	for time.Now().Before(deadline) {
-		// ESRCH means the process group is gone.
 		if err := syscall.Kill(-pgid, 0); err != nil {
 			return nil
 		}

@@ -8,10 +8,12 @@ import (
 // Config is an immutable execution configuration produced by New.
 // Each Run creates a fresh Execution; Config may be reused concurrently.
 type Config struct {
-	policy   Policy
-	clock    Clock
-	observer Observer
-	err      error
+	policy       Policy
+	clock        Clock
+	observer     Observer
+	observerSize int
+	observerDrop DropPolicy
+	err          error
 }
 
 // New builds a Config from functional options.
@@ -31,6 +33,16 @@ func New(options ...Option) Config {
 // Policy returns a copy of the configured policy.
 func (c Config) Policy() Policy {
 	return c.policy
+}
+
+// Apply returns a copy of c with additional options applied.
+func (c Config) Apply(options ...Option) Config {
+	for _, opt := range options {
+		if opt != nil {
+			opt(&c)
+		}
+	}
+	return c
 }
 
 // Func is the user work function supervised by the policy engine.

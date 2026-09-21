@@ -88,3 +88,17 @@ func WithObserver(o Observer) Option {
 		c.observer = o
 	}
 }
+
+// WithObserverQueue sets the async observer buffer size. size <= 0 uses 64.
+func WithObserverQueue(size int) Option {
+	return func(c *Config) {
+		c.observerSize = size
+	}
+}
+
+// WithObserverDropPolicy sets overflow behavior (default DropNewest).
+func WithObserverDropPolicy(p DropPolicy) Option {
+	return func(c *Config) {
+		c.observerDrop = p
+	}
+}

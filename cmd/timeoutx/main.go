@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/axsh/timeout"
 	"github.com/axsh/timeout/process"
+	"github.com/axsh/timeout/protocol"
 )
 
 const version = "0.3.0-dev"
@@ -46,13 +48,29 @@ example:
 }
 
 func runCommand(args []string) int {
+	if _, err := protocol.EffectiveMaxLineBytes(); err != nil {
+		fmt.Fprintf(os.Stderr, "timeoutx: %v\n", err)
+		return 125
+	}
+
 	var (
 		hard, idle, stall, unit, killAfter time.Duration
 		resultPath, progressFile           string
+		eventsPath                         string
+		eventsFD                           = -1
+		eventsFDSet                        bool
+		eventsPathSet                      bool
 		heartbeatOnOutput                  bool
 		progressOnOutput                   bool
 		showProgress                       bool
 		progressFormat                     string
+		probeCmd                           string
+		probeArgs                          []string
+		probeEvery                         = 5 * time.Second
+		probeSignal                        string
+		probeVerbose                       bool
+		timeoutExit                        = 124
+		signalExit                         bool
 	)
 	killAfter = 10 * time.Second
 
@@ -88,6 +106,35 @@ func runCommand(args []string) int {
 		case "--progress-file":
 			i++
 			progressFile = mustArg(args, &i, a)
+		case "--events":
+			i++
+			eventsPath = mustArg(args, &i, a)
+			eventsPathSet = true
+		case "--events-fd":
+			i++
+			eventsFD = mustInt(args, &i, a)
+			eventsFDSet = true
+		case "--probe":
+			i++
+			probeCmd = mustArg(args, &i, a)
+		case "--probe-arg":
+			i++
+			probeArgs = append(probeArgs, mustArg(args, &i, a))
+		case "--probe-every":
+			i++
+			probeEvery = mustDuration(args, &i, a)
+		case "--probe-signal":
+			i++
+			probeSignal = mustArg(args, &i, a)
+		case "--probe-verbose":
+			probeVerbose = true
+			i++
+		case "--timeout-exit":
+			i++
+			timeoutExit = mustInt(args, &i, a)
+		case "--signal-exit":
+			signalExit = true
+			i++
 		case "--heartbeat-on-output":
 			heartbeatOnOutput = true
 			i++
@@ -104,6 +151,14 @@ func runCommand(args []string) int {
 			fmt.Fprintf(os.Stderr, "timeoutx: unknown flag %q\n", a)
 			return 125
 		}
+	}
+	if eventsPathSet && eventsFDSet {
+		fmt.Fprintln(os.Stderr, "timeoutx: --events and --events-fd are mutually exclusive")
+		return 125
+	}
+	if probeEvery <= 0 {
+		fmt.Fprintln(os.Stderr, "timeoutx: --probe-every must be > 0")
+		return 125
 	}
 	if i >= len(args) {
 		fmt.Fprintln(os.Stderr, "timeoutx: missing command")
@@ -130,6 +185,22 @@ func runCommand(args []string) int {
 	}
 	cfg := timeout.New(opts...)
 
+	var probes []timeout.CommandProbe
+	if probeCmd != "" {
+		probes = append(probes, timeout.CommandProbe{
+			Command:     probeCmd,
+			Args:        probeArgs,
+			Interval:    probeEvery,
+			OnFailure:   timeout.ProbeOnFailureWarn,
+			EmptySignal: probeSignal,
+			Verbose:     probeVerbose,
+		})
+	}
+
+	fd := -1
+	if eventsFDSet {
+		fd = eventsFD
+	}
 	_, code := (process.Runner{}).Run(process.RunRequest{
 		Config:             cfg,
 		Command:            cmdName,
@@ -142,7 +213,13 @@ func runCommand(args []string) int {
 		ShowProgress:       showProgress,
 		ProgressFormatJSON: progressFormat == "json",
 		WarnNoPolicy:       true,
+		Probes:             probes,
+		EventsPath:         eventsPath,
+		EventsFD:           fd,
+		TimeoutExit:        timeoutExit,
+		SignalExit:         signalExit,
 	})
+	_ = showProgress
 	return code
 }
 
@@ -168,6 +245,20 @@ func mustArg(args []string, i *int, flag string) string {
 	v := args[*i]
 	*i++
 	return v
+}
+
+func mustInt(args []string, i *int, flag string) int {
+	if *i >= len(args) {
+		fmt.Fprintf(os.Stderr, "timeoutx: %s requires an integer\n", flag)
+		os.Exit(125)
+	}
+	n, err := strconv.Atoi(args[*i])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "timeoutx: invalid int for %s: %v\n", flag, err)
+		os.Exit(125)
+	}
+	*i++
+	return n
 }
 
 func printShellInit() {

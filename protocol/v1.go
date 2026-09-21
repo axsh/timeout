@@ -10,9 +10,6 @@ import (
 
 const Version = 1
 
-// MaxLineBytes is the provisional maximum size of one NDJSON control message.
-const MaxLineBytes = 1 << 20
-
 // Envelope is one control-protocol message.
 type Envelope struct {
 	V       int             `json:"v"`
@@ -26,14 +23,26 @@ type Envelope struct {
 	Name    string          `json:"name,omitempty"`
 }
 
-// DecodeLine parses one NDJSON line.
+// DecodeLine parses one NDJSON line using EffectiveMaxLineBytes.
 func DecodeLine(line []byte) (Envelope, error) {
+	limit, err := EffectiveMaxLineBytes()
+	if err != nil {
+		return Envelope{}, err
+	}
+	return DecodeLineWithLimit(line, limit)
+}
+
+// DecodeLineWithLimit parses one NDJSON line with an explicit size limit.
+func DecodeLineWithLimit(line []byte, limit int) (Envelope, error) {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 {
 		return Envelope{}, fmt.Errorf("protocol: empty line")
 	}
-	if len(line) > MaxLineBytes {
-		return Envelope{}, fmt.Errorf("protocol: line exceeds %d bytes", MaxLineBytes)
+	if limit <= 0 {
+		limit = DefaultMaxLineBytes
+	}
+	if len(line) > limit {
+		return Envelope{}, fmt.Errorf("protocol: line exceeds %d bytes", limit)
 	}
 	var env Envelope
 	if err := json.Unmarshal(line, &env); err != nil {
@@ -85,13 +94,24 @@ func EncodeUnitEnd(id uint64) ([]byte, error) {
 type Handler func(Envelope) error
 
 // ReadLoop reads NDJSON lines from r and invokes handler.
-// Malformed lines invoke onError and continue when onError returns nil.
 func ReadLoop(r io.Reader, handler Handler, onError func(error)) error {
+	limit, err := EffectiveMaxLineBytes()
+	if err != nil {
+		return err
+	}
+	return ReadLoopWithLimit(r, limit, handler, onError)
+}
+
+// ReadLoopWithLimit is ReadLoop with an explicit line size limit.
+func ReadLoopWithLimit(r io.Reader, limit int, handler Handler, onError func(error)) error {
+	if limit <= 0 {
+		limit = DefaultMaxLineBytes
+	}
 	sc := bufio.NewScanner(r)
 	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, MaxLineBytes+1)
+	sc.Buffer(buf, limit+1)
 	for sc.Scan() {
-		env, err := DecodeLine(sc.Bytes())
+		env, err := DecodeLineWithLimit(sc.Bytes(), limit)
 		if err != nil {
 			if onError != nil {
 				onError(err)

@@ -34,6 +34,35 @@ Save a JSON result:
 timeoutx run --stall 2m --result result.json -- ./worker.sh
 ```
 
+Result JSON includes `schemaVersion: 1`. See [result.schema.json](schemas/result.schema.json).
+
+## Events
+
+Machine-readable events are opt-in and never mixed into the child stdout:
+
+```bash
+timeoutx run --events ./events.ndjson --stall 2m -- ./worker.sh
+timeoutx run --events-fd 3 --stall 2m -- ./worker.sh
+```
+
+`--events` and `--events-fd` cannot be combined (exit 125).
+
+## Command probe
+
+```bash
+timeoutx run --stall 30s --probe-every 5s --probe ./check.sh -- ./worker.sh
+```
+
+Probe stdout is NDJSON v1 (`heartbeat` / `status` / `progress`). Probe failure warns by default and does not fail the job.
+
+## Distinguishing exit 124
+
+```bash
+timeoutx run --timeout-exit 143 --hard 1m -- ./job.sh
+```
+
+Policy timeouts use `--timeout-exit` (default 124). A child that exits 124 itself is still passed through when no policy fired.
+
 ## Shell helpers
 
 Shell functions do not implement the policy engine. They send signals to `timeoutx` over an inherited file descriptor.

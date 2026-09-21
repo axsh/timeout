@@ -71,12 +71,13 @@ type Snapshot struct {
 
 // Result is the final outcome of Run.
 type Result struct {
-	Status      ResultStatus
-	Kind        TimeoutKind
-	Err         error
-	Snapshot    Snapshot
-	StartedAt   time.Time
-	FinishedAt  time.Time
-	Elapsed     time.Duration
-	TimeoutUnit *UnitSnapshot
+	Status        ResultStatus
+	Kind          TimeoutKind
+	Err           error
+	Snapshot      Snapshot
+	StartedAt     time.Time
+	FinishedAt    time.Time
+	Elapsed       time.Duration
+	TimeoutUnit   *UnitSnapshot
+	EventsDropped uint64
 }
