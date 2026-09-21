@@ -174,31 +174,57 @@ type Unit interface {
 
 ##### R4.2 実行 API
 
+正規の実行 API は、**設定（Config）を関数本体より前に置く**形とする。
+関数本体が大きくなっても、Timeout 設定が末尾に埋もれないようにするためである。
+
 ```go
 type Func func(Execution) error
 
-func Run(
-    ctx context.Context,
-    fn Func,
-    options ...Option,
-) Result
+// Config は不変な実行設定である。各 Run は新しい Execution を生成する。
+type Config struct { /* 非公開フィールド、または Policy 等 */ }
+
+func New(options ...Option) Config
+
+func Run(ctx context.Context, cfg Config, fn Func) Result
+
+func (c Config) Run(ctx context.Context, fn Func) Result
 ```
 
-- 実行前の設定は Functional Options
-- 実行中の状態・Event は Struct value
+原則は次のように分ける。
+
+| 対象 | 表現 |
+|---|---|
+| 実行前の設定 | `New` への Functional Options → 不変な `Config` |
+| 実行の開始 | `Run(ctx, cfg, fn)` または `cfg.Run(ctx, fn)` |
+| 実行中の状態・Event | Struct value（`Progress` 等） |
 
 ```go
-result := timeout.Run(ctx, func(exec timeout.Execution) error {
-    // work
-    return nil
-},
+// 正規形: 設定が fn より前に来る
+result := timeout.Run(ctx,
+    timeout.New(
+        timeout.Hard(24*time.Hour),
+        timeout.Idle(30*time.Second),
+        timeout.Stall(2*time.Minute),
+        timeout.UnitLimit(1*time.Minute),
+    ),
+    func(exec timeout.Execution) error {
+        // work
+        return nil
+    },
+)
+
+// 再利用: Config を保持して複数回 Run する
+cfg := timeout.New(
     timeout.Hard(24*time.Hour),
     timeout.Idle(30*time.Second),
-    timeout.Stall(2*time.Minute),
-    timeout.UnitLimit(1*time.Minute),
 )
+r1 := timeout.Run(ctx, cfg, jobA)
+r2 := cfg.Run(ctx, jobB)
 ```
 
+- `Config` は並行して複数の `Run` を呼び出してよい。実行状態は Run ごとに分離する
+- 時間 Policy をすべて無効にする場合も、`timeout.New()` を明示的に渡す（nil Config は許可しない）
+- `Run(ctx, fn, options...)` のように Option を fn の後ろに置く形は採用しない
 ##### R4.3 Context
 
 `Execution.Context()` は次の場合に cancel される。
@@ -707,6 +733,10 @@ Go API、CLI、Shell は別々の Timeout 実装を持たず、同じ Execution 
 
 ### 設計上の確定事項 (v0.3)
 
+- 実行 API の正規形は `Run(ctx, Config, Func)` とし、設定を関数本体より前に置く
+- Functional Options は `New(...Option) Config` に閉じ、`Run` の可変長引数としては受け取らない
+- `Config` は不変で再利用可能。各 `Run` が新しい Execution を生成する
+- `Config.Run(ctx, Func)` は `Run(ctx, cfg, Func)` と同等の shortcut とする
 - Progress の正規 API は Functional Options ではなく `Progress` value object を渡す形式とする
 - `ProgressTo(current, total)` は数値だけを渡す小さな shortcut とする
 - `Stage` / `Message` / `Details` が必要な場合は正規 API を使う
