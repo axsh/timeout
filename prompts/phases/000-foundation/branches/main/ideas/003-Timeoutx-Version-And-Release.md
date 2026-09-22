@@ -2,13 +2,14 @@
 
 > **Parent**: `prompts/phases/000-foundation/branches/main/ideas/000-Timeoutx-Execution-Policy-Engine.md`
 >
-> 編集可能なバージョン番号を正本化し、`timeoutx` バイナリへの埋め込み表示と、
-> その番号を使う GitHub Release 用スクリプトを追加する。
+> 編集可能なバージョン番号を正本化し、ライブラリ・CLI・Git tag / GitHub Release で共有する。
+> `timeoutx` への埋め込み表示と、その番号で tag を打つ Release スクリプトを追加する。
 
 ## 背景 (Background)
 
 現状のバージョン表示は `cmd/timeoutx/main.go` 内の定数 `const version = "0.3.0-dev"` にハードコードされている。
 ビルド ID（commit SHA）は埋め込まれておらず、`timeoutx version` はバージョン文字列だけを出す。
+公開 Go module `github.com/axsh/timeout` 側にも、実行時に参照できるバージョン文字列がない。
 
 GitHub Releases 向けのクロスコンパイルは `.github/workflows/release.yml` が tag `v*` で動作するが、
 次の点が不足している。
@@ -16,8 +17,27 @@ GitHub Releases 向けのクロスコンパイルは `.github/workflows/release.
 1. リポジトリ内に「現在のバージョン」をテキストで編集できる単一の正本がない
 2. ビルド成果物にバージョンと commit ID が埋め込まれない（`ldflags` 未使用）
 3. ローカルから同じ規則で Release を切るスクリプトがない（CI のみ）
+4. ライブラリ利用者が参照する版と、CLI / GitHub Release / `go get` 用タグが別管理になりうる
 
-利用者が「どの版のバイナリか」を確認でき、メンテナが同じ番号で tag / Release を切れる状態にする。
+利用者が「どの版のバイナリ／ライブラリか」を確認でき、メンテナが同じ番号で tag・Release・module 版を切れる状態にする。
+
+### Go module との関係（可能である理由）
+
+Go の module バージョンは `go.mod` に自モジュール版を書かず、**Git タグ `vX.Y.Z`** が公開バージョンになる。
+
+例: `go get github.com/axsh/timeout@v0.3.0` は、リポジトリの tag `v0.3.0` を指す。
+
+したがって次の一本化が可能である。
+
+```text
+VERSION（例: 0.3.0）
+   │
+   ├─► timeout.Version（ライブラリ API・go:embed）
+   ├─► timeoutx version 表示（CLI）
+   └─► git tag / GitHub Release 名 v0.3.0（= go get 可能な module 版）
+```
+
+`VERSION` を正本にし、`release.sh` が `v{VERSION}` を打つ設計は、ライブラリ版とリリースタグの両方にそのまま使える。
 
 ---
 
@@ -31,28 +51,46 @@ GitHub Releases 向けのクロスコンパイルは `.github/workflows/release.
 
 - 内容は **1 行のみ**。前後の空白は無視してよいが、改行以外の余分な文字は含めない
 - 形式は SemVer 風の文字列とする（例: `0.3.0`、開発中は `0.4.0-dev` も可）
-- 先頭の `v` は付けない（正本は `0.3.0`、Git tag は `v0.3.0`）
+- 先頭の `v` は付けない（正本は `0.3.0`、Git tag / module 版は `v0.3.0`）
 - このファイルがプロジェクトの「現在のバージョン」の唯一の正本である
-- `cmd/timeoutx/main.go` 内のハードコード定数は、ビルド時未指定時のフォールバックに限り残してよいが、正本は `VERSION` とする
+- 次のすべてが同じ `VERSION` を参照する:
+  1. ライブラリ API（R1.1）
+  2. CLI `timeoutx version`（R3）
+  3. `release.sh` が打つ Git tag および GitHub Release 名（R4.2）
+- `cmd/timeoutx/main.go` 内のハードコード定数は廃止し、ライブラリ側の値を使う
 
 初期値は現状の意図に合わせて `0.3.0-dev` とする（実装時に現状定数と揃える）。
 
-#### R2. バイナリへの埋め込み
+##### R1.1 ライブラリ API
 
-`timeoutx` ビルド時に次の 2 値を埋め込む。
+ルート package `timeout`（`github.com/axsh/timeout`）から、埋め込み済みのバージョン文字列を公開する。
 
-| 変数 | 意味 | 取得元 |
+```go
+// 利用者からの参照例
+fmt.Println(timeout.Version)
+```
+
+- `VERSION` はルート package と同じディレクトリにあるため、`//go:embed VERSION` で取り込む（利用者が `go get` したときも ldflags 不要で値が入る）
+- 公開識別子は `Version`（string）。前後空白・末尾改行は trim してから使う
+- protocol の `protocol.Version`（エンベロープ形式の整数）とは別物であり、名前空間も `protocol` のまま変更しない
+- ライブラリ利用者向けに `docs/library.md` へ一行以上の言及を入れる
+
+補足: Go module としての解決バージョン（`go.mod` の `require github.com/axsh/timeout v0.3.0`）は Git tag 由来であり、`timeout.Version` と一致させるのは `release.sh` が `VERSION` から `v{VERSION}` を打つことで保証する。
+
+#### R2. バイナリへの埋め込み（CLI build ID）
+
+`timeoutx` ビルド時に次を満たす。
+
+| 値 | 意味 | 取得元 |
 |---|---|---|
-| version | リリース／開発バージョン | `VERSION` の内容 |
-| commit（build ID） | ビルド時点の Git commit | `git rev-parse --short HEAD`（7 文字以上の短縮 SHA） |
+| version | リリース／開発バージョン | `timeout.Version`（= `VERSION` の embed） |
+| commit（build ID） | ビルド時点の Git commit | `git rev-parse --short HEAD`（7 文字以上の短縮 SHA）を `-ldflags` で CLI に注入 |
 
-- 埋め込み方法は Go の `-ldflags "-X ..."` とする
-- `scripts/process/build.sh` で `bin/timeoutx` を作るときも、上記を埋め込む
-- `.github/workflows/release.yml` のビルドでも同様に埋め込む
-- ldflags 未指定の素の `go build` / `go install` では:
-  - version: フォールバック文字列（例: `dev` または現行の `0.3.0-dev`）
-  - commit: `unknown`
-  とし、パニックしない
+- version はライブラリ embed を正とし、CLI 用に二重管理しない
+- commit だけは CLI の `main` パッケージへ `-ldflags "-X main.commit=..."` で注入する（ライブラリ利用時の ldflags は期待できないため、commit の公開は CLI 必須・ライブラリは任意）
+- `scripts/process/build.sh` で `bin/timeoutx` を作るときも commit を埋め込む
+- `.github/workflows/release.yml` を残す場合も同様
+- ldflags 未指定の素の `go build` / `go install` では commit は `unknown` とし、パニックしない。version は embed により `VERSION` の内容になる
 
 dirty 作業ツリーの扱いは任意（任意要件 R7）とする。必須では commit に dirty 接尾辞を付けなくてよい。
 
@@ -65,6 +103,8 @@ dirty 作業ツリーの扱いは任意（任意要件 R7）とする。必須�
 ```text
 timeoutx 0.3.0-dev (commit abcdef1)
 ```
+
+ここでのバージョン部分は `timeout.Version` と同一である。
 
 制約:
 
@@ -83,13 +123,15 @@ timeoutx 0.3.0-dev (commit abcdef1)
 - GitHub 認証は `gh` の既存ログイン（または `GH_TOKEN`）に任せる
 - 対象リポジトリは `origin` が指す GitHub リポジトリ（現状 `axsh/timeout`）
 
-##### R4.2 バージョンと tag
+##### R4.2 バージョンと tag（ライブラリ module 版と同一）
 
 1. `VERSION` を読む（trim 後が空ならエラー終了）
 2. tag 名は `v` + `VERSION`（例: `VERSION=0.3.0` → tag `v0.3.0`）
-3. `VERSION` が `-dev` を含む場合は **リリースを拒否** して非 0 で終了する（誤公開防止）
-4. 作業ツリーが dirty の場合は拒否する（未コミット変更での公開を防ぐ）
-5. 既に同名 tag / Release が存在する場合は拒否する（上書きしない）
+3. この tag が **Go module の公開バージョン** でもある（`go get github.com/axsh/timeout@v0.3.0` が同じ commit を指す）
+4. `VERSION` が `-dev` を含む場合は **リリースを拒否** して非 0 で終了する（誤公開防止。module に `-dev` タグを出さない）
+5. 作業ツリーが dirty の場合は拒否する（未コミット変更での公開を防ぐ）
+6. 既に同名 tag / Release が存在する場合は拒否する（上書きしない）
+7. リリース直前に、埋め込み後の `timeout.Version`（またはビルドした `timeoutx version`）が `VERSION` と一致することを確認してから tag を打つ（不一致なら中止）
 
 ##### R4.3 成果物
 
@@ -136,9 +178,10 @@ timeoutx 0.3.0-dev (commit abcdef1)
 
 #### R5. ドキュメント更新
 
-- `README.md` の Install / Build 周辺に、`VERSION` が正本であることと、`timeoutx version` で version + commit が見られることを短く追記する
-- Release 手順として `scripts/process/release.sh` の使い方を 数行で記載する
+- `README.md` の Install / Build 周辺に、`VERSION` が正本であること、`timeoutx version` で version + commit が見られること、`go get ...@vX.Y.Z` のタグが同じ `VERSION` 由来であることを短く追記する
+- Release 手順として `scripts/process/release.sh` の使い方を数行で記載する（「VERSION を直す → スクリプトが `v{VERSION}` tag を打つ → module と GitHub Release が揃う」）
 - `docs/cli.md` に `version` サブコマンドの出力例を 1 つ載せる
+- `docs/library.md` に `timeout.Version` の参照例を 1 つ載せる
 
 ### 任意要件
 
@@ -151,9 +194,10 @@ timeoutx 0.3.0-dev (commit abcdef1)
 `git` が dirty なときのローカル `build.sh` で commit を `abcdef1-dirty` にするのは任意。
 `release.sh` は dirty を拒否すれば足りる。
 
-#### R8. `go generate` / embed
+#### R8. ライブラリからの Commit 公開
 
-`VERSION` を `go:embed` で取り込む方式は任意。必須は ldflags による注入でよい。
+`timeout.Commit` を公開するのは任意。必須は CLI の build ID 表示でよい。
+ライブラリへ commit を載せる場合はリリース時 codegen か同様の手段が必要（通常の `go get` では ldflags が効かない）。
 
 ---
 
@@ -162,49 +206,54 @@ timeoutx 0.3.0-dev (commit abcdef1)
 ### コンポーネント概要
 
 ```text
-VERSION                          # 正本（人が編集）
-        │
-        ├─► scripts/process/build.sh     -ldflags → bin/timeoutx
-        ├─► scripts/process/release.sh   -ldflags → dist/timeoutx_* + gh release
-        └─► .github/workflows/release.yml（A案では無効化 or スクリプトと役割分担を明記）
+VERSION                                 # 正本（人が編集）
+   │
+   ├─► //go:embed → timeout.Version     # ライブラリ API
+   │                    │
+   │                    └─► timeoutx version 表示の version 部分
+   │
+   ├─► scripts/process/build.sh         # commit のみ -ldflags → bin/timeoutx
+   ├─► scripts/process/release.sh       # tag v{VERSION} + バイナリ + gh release
+   │         (= go get @v{VERSION} の module 版)
+   └─► .github/workflows/release.yml    # A案では無効化 or 役割分担を明記
 
 cmd/timeoutx/main.go
-  var version = "..."   # ldflags で上書き
-  var commit  = "unknown"
-  version コマンドが両方を表示
+  version ← timeout.Version
+  commit  ← ldflags（無指定時 "unknown"）
 ```
 
 ### 設計上の決定
 
 1. **正本はルート `VERSION` 1 ファイル**。Go 定数や CI 環境変数を正本にしない
-2. **Git tag は常に `v` + VERSION**。`VERSION` 自体には `v` を書かない
-3. **開発用サフィックス `-dev` の Release は禁止**。正式公開前に `VERSION` を `x.y.z` に直してから `release.sh` を走らせる
-4. **表示は CLI のみ**。Result JSON や protocol に version フィールドを足さない（本仕様の範囲外）
-5. **Release の正経路は `scripts/process/release.sh`（A案）**。CI との二重公開を避ける
+2. **Git tag は常に `v` + VERSION**。これが GitHub Release 名かつ Go module 版になる。`VERSION` 自体には `v` を書かない
+3. **開発用サフィックス `-dev` の Release / tag は禁止**。正式公開前に `VERSION` を `x.y.z` に直してから `release.sh` を走らせる
+4. **ライブラリ版文字列は `go:embed`**。消費者が `go get` する経路では ldflags が使えないため
+5. **CLI の commit（build ID）だけ ldflags**。version はライブラリと共有
+6. **Result JSON や protocol エンベロープに product version は足さない**（本仕様の範囲外。`protocol.Version` は別物）
+7. **Release の正経路は `scripts/process/release.sh`（A案）**。CI との二重公開を避ける
 
 ### 主要な変更ファイル（予定）
 
 | パス | 変更 |
 |---|---|
 | `VERSION` | 新規。初期値 `0.3.0-dev` |
-| `cmd/timeoutx/main.go` | `version`/`commit` 変数化、表示更新 |
-| `scripts/process/build.sh` | ldflags 埋め込み |
-| `scripts/process/release.sh` | 新規 |
+| `version.go`（ルート package） | `//go:embed VERSION` と公開 `Version` |
+| `cmd/timeoutx/main.go` | `timeout.Version` + `commit` 表示。ハードコード削除 |
+| `scripts/process/build.sh` | commit の ldflags 埋め込み |
+| `scripts/process/release.sh` | 新規（tag = module 版） |
 | `.github/workflows/release.yml` | A案に合わせて無効化または埋め込みのみに整理 |
-| `README.md` / `docs/cli.md` | 表示例と Release 手順 |
+| `README.md` / `docs/cli.md` / `docs/library.md` | 表示例・`timeout.Version`・Release / tag 手順 |
 | `.gitignore` | `dist/` を追加（未追加なら） |
-| `tests/cli_test.go` 等 | version 出力の検証 |
+| `tests/` | version / release の検証 |
 
-### ldflags の想定
+### CLI commit 埋め込みの想定
 
 ```bash
-VERSION=$(tr -d ' \t\r\n' < VERSION)
 COMMIT=$(git rev-parse --short HEAD)
-LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}"
+LDFLAGS="-s -w -X main.commit=${COMMIT}"
 go build -trimpath -ldflags "$LDFLAGS" -o bin/timeoutx ./cmd/timeoutx
+# version 文字列は timeout.Version（embed）から取得
 ```
-
-（パッケージパスが `main` 以外に分かれた場合は `-X` のパスを合わせる。）
 
 ---
 
@@ -242,6 +291,19 @@ go build -trimpath -ldflags "$LDFLAGS" -o bin/timeoutx ./cmd/timeoutx
 
 1. `README.md` に `VERSION` と `scripts/process/release.sh` への言及がある
 2. `docs/cli.md` に `timeoutx version` の出力例がある
+3. `docs/library.md` に `timeout.Version` の言及がある
+
+### VS6. ライブラリ Version と VERSION ファイルが一致する
+
+1. ルート package のテスト、または小さなプログラムで `timeout.Version` を読む
+2. リポジトリの `VERSION`（trim 後）と文字列が一致する
+3. `VERSION` を一時変更して再テストすると、embed 側も追従する（テスト後に戻す）
+
+### VS7. リリースタグが module 版になる
+
+1. `VERSION=0.3.0` のとき、`release.sh`（またはその dry-run のタグ名計算）が `v0.3.0` を出す
+2. ドキュメントまたはスクリプトコメントに、この tag が `go get github.com/axsh/timeout@v0.3.0` 用であることが書かれている
+3. 実リモートへの tag push は本仕様の自動テストでは行わない（名前規則の検証に留める）
 
 ---
 
@@ -273,29 +335,31 @@ scripts/process/integration_test.sh --specify "TestRelease"
 
 | 要件 | シナリオ | 自動化 |
 |---|---|---|
-| R1 VERSION 正本 | VS1 | ビルドが `VERSION` を読むこと、`TestVersionEmbed` |
-| R2 ldflags 埋め込み | VS1, VS2 | `TestVersionEmbed` / `TestVersionFallback` |
-| R3 version 表示 | VS1 | 出力正規表現で version + commit を assert |
-| R4.2 `-dev` 拒否 | VS3 | `TestReleaseRejectsDev` |
+| R1 VERSION 正本 | VS1, VS6 | `TestLibraryVersionMatchesFile` |
+| R1.1 ライブラリ API | VS6 | 単体: `timeout.Version` と `VERSION` の一致 |
+| R2 commit ldflags | VS1, VS2 | `TestVersionEmbed` / `TestVersionCommitFallback` |
+| R3 version 表示 | VS1 | 出力が `timeout.Version` + commit を含む |
+| R4.2 tag = module 版 | VS3, VS7 | `TestReleaseTagName` / `TestReleaseRejectsDev` |
 | R4.3 成果物名 | VS4 | dry-run 後のファイル一覧 assert |
 | R4.4 dry-run | VS4 | `TestReleaseDryRun`（実 GitHub は叩かない） |
-| R5 ドキュメント | VS5 | `TestVersionDocs` またはファイル存在・文字列確認 |
+| R5 ドキュメント | VS5 | `TestVersionDocs`（cli / library / README） |
 
 ### テスト設計セルフレビュー
 
-1. **網羅性**: 埋め込み成功・未指定フォールバック・`-dev` 拒否・dry-run 成果物を分けて確認する
-2. **証拠**: `timeoutx version` の stdout を正規表現で assert する。ドキュメント文字列一致だけにしない
-3. **迂回排除**: Release の本実行（`gh release create`）は CI 上で実リモートを汚さない。dry-run とガード条件で検証する
-4. **依存**: `gh` 認証が無い環境でも VS3/VS4 が通ること（dry-run / 早期バリデーション）
+1. **網羅性**: ライブラリ一致・CLI 表示・commit フォールバック・`-dev` 拒否・tag 名規則・dry-run 成果物を分けて確認する
+2. **証拠**: `timeout.Version` と `VERSION` ファイル、および `timeoutx version` の stdout を assert する
+3. **迂回排除**: Release の本実行（`gh release create` / 実 tag push）は自動テストでリモートを汚さない。dry-run とガード条件で検証する
+4. **依存**: `gh` 認証が無い環境でも VS3/VS4/VS7 が通ること（dry-run / 早期バリデーション）
 
 ---
 
 ## 完了条件
 
-- [ ] ルートに `VERSION` があり、編集がビルド成果物の表示に反映される
+- [ ] ルートに `VERSION` があり、`timeout.Version` および CLI 表示に反映される
 - [ ] `timeoutx version` が version と commit（build ID）を表示する
-- [ ] `scripts/process/build.sh` が埋め込み付きで `bin/timeoutx` を作る
-- [ ] `scripts/process/release.sh` が `VERSION` 由来の tag 名で GitHub Release 用成果物を出せる（dry-run で検証可能）
-- [ ] `-dev` VERSION ではリリースできない
-- [ ] README / CLI ドキュメントが更新されている
+- [ ] `scripts/process/build.sh` が commit 埋め込み付きで `bin/timeoutx` を作る
+- [ ] `scripts/process/release.sh` が `VERSION` 由来の tag `v{VERSION}` で GitHub Release 用成果物を出せる（dry-run で検証可能）
+- [ ] その tag が Go module の公開バージョン（`go get ...@v{VERSION}`）と同じ規則である
+- [ ] `-dev` VERSION ではリリース／tag できない
+- [ ] README / CLI / library ドキュメントが更新されている
 - [ ] 既存 CI Release との二重公開が起きないよう整理されている
