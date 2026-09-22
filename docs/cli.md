@@ -2,6 +2,16 @@
 
 `timeoutx` applies the same policies as the Go library. Install a release binary or build it yourself. See the [README](../README.md) for download and build steps.
 
+## Version
+
+```bash
+timeoutx version
+# timeoutx 0.3.0-dev (commit abcdef1)
+```
+
+The version string comes from the repository `VERSION` file (same as `timeout.Version`).
+The commit is embedded at build time.
+
 ## Run a command
 
 ```bash

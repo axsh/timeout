@@ -10,6 +10,15 @@ import "github.com/axsh/timeout"
 go get github.com/axsh/timeout
 ```
 
+## Version
+
+```go
+fmt.Println(timeout.Version) // e.g. "0.3.0-dev"
+```
+
+This matches the repository `VERSION` file. Released module tags are `v` + that value
+(for example `go get github.com/axsh/timeout@v0.3.0`).
+
 ## Run a job
 
 Configuration comes before the function, so a long function body does not hide the limits.

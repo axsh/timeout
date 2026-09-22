@@ -12,7 +12,8 @@ import (
 	"github.com/axsh/timeout/protocol"
 )
 
-const version = "0.3.0-dev"
+// commit is set at link time via -ldflags "-X main.commit=...".
+var commit = "unknown"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -21,7 +22,7 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "version", "--version", "-V":
-		fmt.Println("timeoutx", version)
+		fmt.Printf("timeoutx %s (commit %s)\n", timeout.Version, commit)
 	case "shell-init":
 		printShellInit()
 	case "run":

@@ -103,8 +103,10 @@ build_root_module() {
 
     if [[ -d "$PROJECT_ROOT/cmd/timeoutx" ]]; then
         info "Building timeoutx CLI..."
-        if go build -o "$PROJECT_ROOT/bin/timeoutx" ./cmd/timeoutx; then
-            success "Build succeeded → bin/timeoutx"
+        local commit
+        commit=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+        if go build -trimpath -ldflags "-s -w -X main.commit=${commit}" -o "$PROJECT_ROOT/bin/timeoutx" ./cmd/timeoutx; then
+            success "Build succeeded → bin/timeoutx (commit ${commit})"
         else
             fail "Build failed for cmd/timeoutx."
             FAILED=true

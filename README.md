@@ -19,10 +19,14 @@ Progress   = the work actually moved forward
 
 ## Install
 
+The product version lives in the repository root `VERSION` file (no leading `v`).
+Released Go module tags and GitHub Release names are `v` + that value
+(for example `VERSION=0.3.0` → `go get github.com/axsh/timeout@v0.3.0`).
+
 Go module:
 
 ```bash
-go get github.com/axsh/timeout
+go get github.com/axsh/timeout@v0.3.0
 ```
 
 CLI from source:
@@ -45,6 +49,16 @@ Each release includes a `SHA256SUMS` file. On Windows the file name ends with `.
 
 Requirements: Go 1.22 or newer.
 
+Preferred (embeds the current git commit into the CLI):
+
+```bash
+./scripts/process/build.sh
+./bin/timeoutx version
+# timeoutx 0.3.0-dev (commit abcdef1)
+```
+
+The version string comes from `VERSION` / `timeout.Version`. The commit is set at link time.
+
 ```bash
 go build -o timeoutx ./cmd/timeoutx
 ```
@@ -60,8 +74,23 @@ GOOS=windows GOARCH=amd64 go build -o timeoutx_windows_amd64.exe ./cmd/timeoutx
 Tests:
 
 ```bash
-go test ./...
+./scripts/process/build.sh
 ```
+
+## Release
+
+1. Set `VERSION` to a release number without `-dev` (example: `0.3.0`).
+2. Commit the change on a clean working tree.
+3. Run:
+
+```bash
+./scripts/process/release.sh --dry-run   # optional: build artifacts only
+./scripts/process/release.sh            # tag v0.3.0, push, GitHub Release
+```
+
+The script builds the six platform binaries, writes `SHA256SUMS`, creates tag `v{VERSION}`
+(also the Go module version), and uploads the assets with `gh`.
+Do not rely on a separate CI release workflow; `scripts/process/release.sh` is the release path.
 
 ## Documentation
 
