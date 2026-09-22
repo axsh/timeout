@@ -225,7 +225,7 @@ This matches the repository `VERSION` file. Released module tags are `v` + that 
     *   Add `tests/version_release_test.go` for VS1–VS7 coverage.
 9. **[x] Verify**:
     *   Run Verification Plan commands. Fix until green.
-10. **[/] Commit / far-knowledge / push** per execute workflow.
+10. **[x] Commit / far-knowledge / push** per execute workflow.
 
 ## Verification Plan
 
