@@ -207,25 +207,25 @@ This matches the repository `VERSION` file. Released module tags are `v` + that 
 
 ## Step-by-Step Implementation Guide
 
-1. **[ ] Unit test first (library)**:
+1. **[x] Unit test first (library)**:
     *   Add `version_test.go` expecting `Version` to match `VERSION` file（ファイル未作成でもテストは書く。次でグリーン）。
-2. **[ ] Add VERSION + version.go**:
+2. **[x] Add VERSION + version.go**:
     *   Create `VERSION` with `0.3.0-dev` and `version.go` as above. Run unit path via build later.
-3. **[ ] CLI version + commit**:
+3. **[x] CLI version + commit**:
     *   Update `cmd/timeoutx/main.go`.
-4. **[ ] build.sh ldflags**:
+4. **[x] build.sh ldflags**:
     *   Embed `main.commit` on build.
-5. **[ ] release.sh**:
+5. **[x] release.sh**:
     *   Implement full script with `--dry-run`, `--skip-push`, `TIMEOUTX_VERSION_FILE`, `-dev` reject, artifact matrix, version self-check, checksum, tag=module note.
-6. **[ ] Remove CI release.yml + gitignore dist/**:
+6. **[x] Remove CI release.yml + gitignore dist/**:
     *   Delete workflow; add `dist/` to `.gitignore`.
-7. **[ ] Docs**:
+7. **[x] Docs**:
     *   Update `README.md`, `docs/cli.md`, `docs/library.md`.
-8. **[ ] Integration tests**:
+8. **[x] Integration tests**:
     *   Add `tests/version_release_test.go` for VS1–VS7 coverage.
-9. **[ ] Verify**:
+9. **[x] Verify**:
     *   Run Verification Plan commands. Fix until green.
-10. **[ ] Commit / far-knowledge / push** per execute workflow.
+10. **[/] Commit / far-knowledge / push** per execute workflow.
 
 ## Verification Plan
 
